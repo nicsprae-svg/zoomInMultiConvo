@@ -24,6 +24,16 @@ interface ThreadStoreState {
   branchFanOut: (sourceThreadId: string, messageId: string, count: number) => string[];
   /** Appends the same user message to each thread and generates in parallel. */
   broadcastMessage: (threadIds: string[], content: string) => void;
+  /**
+   * Creates one new thread whose context is synthesized from the tail of
+   * each source thread, and immediately requests a reply. Needs at least two
+   * distinct, existing source threads; returns null otherwise.
+   */
+  mergeThreads: (sourceThreadIds: string[]) => string | null;
+  /** Manual annotation edge between any two threads; never affects layout. */
+  addReferenceEdge: (sourceId: string, targetId: string) => void;
+  /** No-op on a 'branch' edge — structural lineage only ever changes via deleteThread. */
+  removeEdge: (edgeId: string) => void;
   renameThread: (threadId: string, title: string) => void;
   setThreadStatus: (threadId: string, status: ThreadStatus) => void;
   deleteThread: (threadId: string) => void;
@@ -32,7 +42,7 @@ interface ThreadStoreState {
 
 function createThread(overrides: Partial<Thread> & Pick<Thread, 'id'>): Thread {
   return {
-    parentThreadId: null,
+    parentThreadIds: [],
     branchFromMessageId: null,
     title: 'Thread',
     messages: [],
@@ -47,6 +57,10 @@ function createThread(overrides: Partial<Thread> & Pick<Thread, 'id'>): Thread {
 
 function toLLMMessages(messages: Message[]): LLMMessage[] {
   return messages.map((m) => ({ role: m.role, content: m.content }));
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 function makeInitialState(): Pick<ThreadStoreState, 'threads' | 'edges' | 'rootThreadId'> {
@@ -158,11 +172,11 @@ export const useThreadStore = create<ThreadStoreState>()(
           .map((m) => ({ ...m }));
 
         const newThreadId = generateId();
-        const position = computeBranchPosition(source, state.threads);
+        const position = computeBranchPosition([source], state.threads);
 
         const newThread = createThread({
           id: newThreadId,
-          parentThreadId: sourceThreadId,
+          parentThreadIds: [sourceThreadId],
           branchFromMessageId: messageId,
           title: `Branch of ${source.title}`,
           messages: inheritedMessages,
@@ -173,6 +187,7 @@ export const useThreadStore = create<ThreadStoreState>()(
           id: `${sourceThreadId}-${newThreadId}`,
           source: sourceThreadId,
           target: newThreadId,
+          type: 'branch',
         };
 
         set((s) => ({
@@ -201,10 +216,10 @@ export const useThreadStore = create<ThreadStoreState>()(
 
         for (let i = 0; i < count; i++) {
           const newThreadId = generateId();
-          const position = computeBranchPosition(source, workingThreads);
+          const position = computeBranchPosition([source], workingThreads);
           const newThread = createThread({
             id: newThreadId,
-            parentThreadId: sourceThreadId,
+            parentThreadIds: [sourceThreadId],
             branchFromMessageId: messageId,
             title: `Variant ${i + 1} of ${source.title}`,
             messages: inheritedMessages,
@@ -216,6 +231,7 @@ export const useThreadStore = create<ThreadStoreState>()(
             id: `${sourceThreadId}-${newThreadId}`,
             source: sourceThreadId,
             target: newThreadId,
+            type: 'branch',
           });
         }
 
@@ -260,6 +276,76 @@ export const useThreadStore = create<ThreadStoreState>()(
         targetIds.forEach((id) => requestReply(id, id));
       },
 
+      mergeThreads: (sourceThreadIds) => {
+        const state = get();
+        const uniqueIds = [...new Set(sourceThreadIds)];
+        const sources = uniqueIds
+          .map((id) => state.threads[id])
+          .filter((t): t is Thread => Boolean(t));
+        if (sources.length < 2) return null;
+
+        // Distilled, not full history: each source contributes only its most
+        // recent message, so synthesis reads as "reconcile these takes" rather
+        // than replaying every parent transcript into the new thread.
+        const promptLines = sources.map((s) => {
+          const tail = s.messages[s.messages.length - 1];
+          return `- "${s.title}": ${tail ? truncate(tail.content, 160) : '(no messages yet)'}`;
+        });
+        const synthesisMessage: Message = {
+          id: generateId(),
+          role: 'user',
+          content: `Synthesize these threads into one coherent take:\n${promptLines.join('\n')}`,
+          timestamp: Date.now(),
+        };
+
+        const newThreadId = generateId();
+        const position = computeBranchPosition(sources, state.threads);
+        const newThread = createThread({
+          id: newThreadId,
+          parentThreadIds: sources.map((s) => s.id),
+          branchFromMessageId: null,
+          title: `Merge of ${sources.map((s) => s.title).join(' + ')}`,
+          messages: [synthesisMessage],
+          position,
+        });
+
+        const newEdges: ThreadEdge[] = sources.map((s) => ({
+          id: `${s.id}-${newThreadId}`,
+          source: s.id,
+          target: newThreadId,
+          type: 'branch',
+        }));
+
+        set((s) => ({
+          threads: { ...s.threads, [newThreadId]: newThread },
+          edges: [...s.edges, ...newEdges],
+        }));
+
+        requestReply(newThreadId);
+        return newThreadId;
+      },
+
+      addReferenceEdge: (sourceId, targetId) => {
+        if (sourceId === targetId) return;
+        const state = get();
+        if (!state.threads[sourceId] || !state.threads[targetId]) return;
+
+        const edgeId = `ref-${sourceId}-${targetId}`;
+        if (state.edges.some((e) => e.id === edgeId)) return;
+
+        set((s) => ({
+          edges: [...s.edges, { id: edgeId, source: sourceId, target: targetId, type: 'reference' }],
+        }));
+      },
+
+      removeEdge: (edgeId) => {
+        set((s) => {
+          const edge = s.edges.find((e) => e.id === edgeId);
+          if (!edge || edge.type !== 'reference') return s;
+          return { edges: s.edges.filter((e) => e.id !== edgeId) };
+        });
+      },
+
       renameThread: (threadId, title) => {
         const trimmed = title.trim();
         if (!trimmed) return;
@@ -271,23 +357,27 @@ export const useThreadStore = create<ThreadStoreState>()(
       },
 
       /**
-       * Deletes a thread and adopts its children up to its parent, so no
-       * subtree is ever silently destroyed. The root cannot be deleted: it
-       * anchors the graph and has no parent to adopt its children.
-       * Re-parented children lose `branchFromMessageId`, since the message it
-       * pointed at lived in the deleted thread. Their own messages are
-       * untouched — they were copied at branch time and are independent.
+       * Deletes a thread and reconnects its children directly to its own
+       * parent(s), so no subtree is ever silently destroyed. The root cannot
+       * be deleted: it anchors the graph and has no parent to adopt its
+       * children. Generalized for merge nodes: a child adopts *all* of the
+       * deleted thread's parents in its place, which also correctly handles
+       * deleting a merge node itself (its children fan back out to every
+       * thread it had synthesized). Re-parented children lose
+       * `branchFromMessageId`, since it pointed at a message that lived in
+       * the deleted thread (or is no longer a single unambiguous parent).
+       * Their own messages are untouched — copied at branch/merge time and
+       * independent ever since.
        */
       deleteThread: (threadId) => {
         const state = get();
         const target = state.threads[threadId];
-        if (!target || target.parentThreadId === null) return;
+        if (!target || target.parentThreadIds.length === 0) return;
 
-        const parentId = target.parentThreadId;
-        if (!state.threads[parentId]) return;
+        const grandparentIds = target.parentThreadIds;
 
         const childIds = state.edges
-          .filter((e) => e.source === threadId)
+          .filter((e) => e.type === 'branch' && e.source === threadId)
           .map((e) => e.target);
 
         const threads = { ...state.threads };
@@ -295,9 +385,14 @@ export const useThreadStore = create<ThreadStoreState>()(
         for (const childId of childIds) {
           const child = threads[childId];
           if (!child) continue;
+          const nextParentIds = [
+            ...new Set(
+              child.parentThreadIds.flatMap((pid) => (pid === threadId ? grandparentIds : [pid])),
+            ),
+          ];
           threads[childId] = {
             ...child,
-            parentThreadId: parentId,
+            parentThreadIds: nextParentIds,
             branchFromMessageId: null,
           };
         }
@@ -306,14 +401,17 @@ export const useThreadStore = create<ThreadStoreState>()(
           (e) => e.source !== threadId && e.target !== threadId,
         );
         const existingIds = new Set(survivingEdges.map((e) => e.id));
-        const adoptionEdges = childIds
-          .filter((childId) => threads[childId])
-          .map((childId) => ({
-            id: `${parentId}-${childId}`,
-            source: parentId,
-            target: childId,
-          }))
-          .filter((edge) => !existingIds.has(edge.id));
+        const adoptionEdges: ThreadEdge[] = [];
+        for (const childId of childIds) {
+          if (!threads[childId]) continue;
+          for (const parentId of grandparentIds) {
+            const edgeId = `${parentId}-${childId}`;
+            if (!existingIds.has(edgeId)) {
+              adoptionEdges.push({ id: edgeId, source: parentId, target: childId, type: 'branch' });
+              existingIds.add(edgeId);
+            }
+          }
+        }
 
         set({ threads, edges: [...survivingEdges, ...adoptionEdges] });
       },

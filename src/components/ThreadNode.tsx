@@ -33,7 +33,8 @@ export function ThreadNode({ id }: NodeProps) {
 
   if (!thread) return null;
 
-  const isRoot = thread.parentThreadId === null;
+  const isRoot = thread.parentThreadIds.length === 0;
+  const isMerge = thread.parentThreadIds.length > 1;
   const statusStyle = STATUS_STYLES[thread.status];
 
   const handleBranch = (messageId: string) => {
@@ -90,14 +91,24 @@ export function ThreadNode({ id }: NodeProps) {
             onKeyDown={handleTitleKeyDown}
           />
         ) : (
-          <button
-            type="button"
-            className="nodrag min-w-0 flex-1 truncate text-left text-sm font-semibold text-gray-800"
-            onClick={startRename}
-            title="Click to rename"
-          >
-            {thread.title}
-          </button>
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {isMerge && (
+              <span
+                className="shrink-0 rounded bg-violet-100 px-1 py-0.5 text-[10px] font-semibold text-violet-700"
+                title={`Merged from ${thread.parentThreadIds.length} threads`}
+              >
+                ⑂ merge
+              </span>
+            )}
+            <button
+              type="button"
+              className="nodrag min-w-0 flex-1 truncate text-left text-sm font-semibold text-gray-800"
+              onClick={startRename}
+              title="Click to rename"
+            >
+              {thread.title}
+            </button>
+          </div>
         )}
 
         <select

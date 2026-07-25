@@ -22,10 +22,16 @@ export interface Position {
 
 export interface Thread {
   id: string;
-  parentThreadId: string | null;
   /**
-   * The assistant message in the parent thread this branch was taken from.
-   * Nulled when lineage is rewired by a delete, since the id no longer resolves.
+   * Empty for the root. One entry for an ordinary branch or fan-out variant.
+   * Two or more for a merge node, whose context was synthesized from each.
+   */
+  parentThreadIds: string[];
+  /**
+   * The assistant message in the (single) parent this branch was taken from.
+   * Only meaningful when parentThreadIds.length === 1 — merge nodes have no
+   * single branch point. Nulled when lineage is rewired by a delete, since
+   * the id no longer resolves.
    */
   branchFromMessageId: string | null;
   title: string;
@@ -39,8 +45,17 @@ export interface Thread {
   createdAt: number;
 }
 
+/**
+ * 'branch' edges are structural lineage — auto-created by branching, fan-out,
+ * or merging — and are what layout and context derive from. 'reference'
+ * edges are manual, user-drawn annotations between any two nodes; they carry
+ * no context and never affect layout.
+ */
+export type EdgeType = 'branch' | 'reference';
+
 export interface ThreadEdge {
   id: string;
   source: string;
   target: string;
+  type: EdgeType;
 }

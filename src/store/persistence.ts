@@ -1,10 +1,10 @@
 import type { Thread, ThreadEdge } from '../types';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const STORAGE_KEY = `zoomChat:v${SCHEMA_VERSION}`;
 
 /** Older keys are read once, migrated forward, then written under STORAGE_KEY. */
-const LEGACY_KEYS = ['zoomChat:v1'];
+const LEGACY_KEYS = ['zoomChat:v2', 'zoomChat:v1'];
 
 export interface PersistedState {
   version: number;
@@ -25,6 +25,9 @@ export function saveState(state: Omit<PersistedState, 'version'>): void {
 
 /**
  * v1 -> v2: threads gained `status` and `error`.
+ * v2 -> v3: `Thread.parentThreadId` (single) became `parentThreadIds` (array,
+ * to allow merge nodes with multiple sources); `ThreadEdge` gained `type`,
+ * defaulted to 'branch' since every pre-v3 edge was structural.
  * Returns null when the payload is too old or malformed to rescue.
  */
 function migrate(data: unknown): PersistedState | null {
@@ -34,28 +37,45 @@ function migrate(data: unknown): PersistedState | null {
   if (typeof raw.threads !== 'object' || raw.threads === null || !Array.isArray(raw.edges)) {
     return null;
   }
-  if (raw.version !== 1 && raw.version !== SCHEMA_VERSION) return null;
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== SCHEMA_VERSION) return null;
 
   const threads: Record<string, Thread> = {};
   for (const [id, value] of Object.entries(raw.threads as Record<string, unknown>)) {
-    const thread = value as Partial<Thread>;
+    const thread = value as Partial<Thread> & { parentThreadId?: string | null };
     if (!thread || typeof thread.id !== 'string' || !Array.isArray(thread.messages)) {
       return null;
     }
-    threads[id] = {
+
+    const parentThreadIds = Array.isArray(thread.parentThreadIds)
+      ? thread.parentThreadIds
+      : thread.parentThreadId
+        ? [thread.parentThreadId]
+        : [];
+
+    const migratedThread: Thread = {
       ...(thread as Thread),
+      parentThreadIds,
       status: thread.status ?? 'open',
       // Transient fields never survive a reload: an in-flight request died with
       // the page, so a persisted `true` would strand the thread permanently.
       isGeneratingReply: false,
       error: null,
     };
+    delete (migratedThread as Partial<Thread> & { parentThreadId?: unknown }).parentThreadId;
+    threads[id] = migratedThread;
   }
+
+  const edges: ThreadEdge[] = (raw.edges as Array<Partial<ThreadEdge>>).map((edge) => ({
+    id: edge.id ?? `${edge.source}-${edge.target}`,
+    source: edge.source ?? '',
+    target: edge.target ?? '',
+    type: edge.type === 'reference' ? 'reference' : 'branch',
+  }));
 
   return {
     version: SCHEMA_VERSION,
     threads,
-    edges: raw.edges as ThreadEdge[],
+    edges,
     rootThreadId: typeof raw.rootThreadId === 'string' ? raw.rootThreadId : null,
   };
 }

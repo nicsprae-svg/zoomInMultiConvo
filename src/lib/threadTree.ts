@@ -5,7 +5,9 @@ export interface ThreadRow {
   id: string;
   depth: number;
   title: string;
+  /** Joined titles of every parent — one for a branch, several for a merge. */
   parentTitle: string | null;
+  isMerge: boolean;
   /** Excerpt of the parent message this thread branched from, if still known. */
   branchFrom: string | null;
   messageCount: number;
@@ -23,23 +25,30 @@ export function excerpt(text: string, max = 60): string {
 
 /**
  * Flattens the thread graph into one row per thread, resolving each thread's
- * parent title and branch-point excerpt so the list view can show lineage
+ * parent title(s) and branch-point excerpt so the list view can show lineage
  * without walking the graph itself.
  */
 export function buildThreadRows(threads: Record<string, Thread>): ThreadRow[] {
   const rows = Object.values(threads).map((thread) => {
-    const parent = thread.parentThreadId ? threads[thread.parentThreadId] : undefined;
+    const parents = thread.parentThreadIds.map((pid) => threads[pid]).filter(Boolean) as Thread[];
+    const isMerge = parents.length > 1;
+
+    // A branch point only makes sense with exactly one parent; a merge's
+    // context comes from several tails at once, not one message.
+    const singleParent = parents.length === 1 ? parents[0] : undefined;
     const branchMessage =
-      parent && thread.branchFromMessageId
-        ? parent.messages.find((m) => m.id === thread.branchFromMessageId)
+      singleParent && thread.branchFromMessageId
+        ? singleParent.messages.find((m) => m.id === thread.branchFromMessageId)
         : undefined;
+
     const lastMessage = thread.messages[thread.messages.length - 1];
 
     return {
       id: thread.id,
       depth: depthOf(thread.id, threads),
       title: thread.title,
-      parentTitle: parent?.title ?? null,
+      parentTitle: parents.length > 0 ? parents.map((p) => p.title).join(' + ') : null,
+      isMerge,
       branchFrom: branchMessage ? excerpt(branchMessage.content) : null,
       messageCount: thread.messages.length,
       lastActivity: lastMessage?.timestamp ?? thread.createdAt,

@@ -3,31 +3,34 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   MarkerType,
   ReactFlow,
   ReactFlowProvider,
   type Node,
   type Edge,
   type OnNodeDrag,
+  type OnConnect,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useThreadStore } from '../store/useThreadStore';
 import { ThreadNode } from './ThreadNode';
+import { ReferenceEdge } from './ReferenceEdge';
 import { ListView } from './ListView';
 import { ComparePanel } from './ComparePanel';
 
 const nodeTypes = { thread: ThreadNode };
+const edgeTypes = { reference: ReferenceEdge };
 
 const defaultEdgeOptions = {
   type: 'smoothstep',
-  markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 },
-  style: { strokeWidth: 2 },
 };
 
 function FlowCanvas() {
   const threads = useThreadStore((s) => s.threads);
   const threadEdges = useThreadStore((s) => s.edges);
   const updateNodePosition = useThreadStore((s) => s.updateNodePosition);
+  const addReferenceEdge = useThreadStore((s) => s.addReferenceEdge);
 
   const nodes: Node[] = useMemo(
     () =>
@@ -43,11 +46,27 @@ function FlowCanvas() {
 
   const edges: Edge[] = useMemo(
     () =>
-      threadEdges.map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-      })),
+      threadEdges.map((edge) => {
+        const isReference = edge.type === 'reference';
+        return {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          // Reference edges route to a custom component with its own delete
+          // button; branch edges use the default smoothstep renderer and are
+          // only ever removed structurally, via deleteThread.
+          type: isReference ? 'reference' : undefined,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 18,
+            height: 18,
+            color: isReference ? '#94a3b8' : '#64748b',
+          },
+          style: isReference
+            ? { strokeWidth: 1.5, strokeDasharray: '6 4', stroke: '#94a3b8' }
+            : { strokeWidth: 2, stroke: '#64748b' },
+        };
+      }),
     [threadEdges],
   );
 
@@ -58,13 +77,23 @@ function FlowCanvas() {
     [updateNodePosition],
   );
 
+  const handleConnect: OnConnect = useCallback(
+    (connection) => {
+      if (!connection.source || !connection.target) return;
+      addReferenceEdge(connection.source, connection.target);
+    },
+    [addReferenceEdge],
+  );
+
   return (
     <ReactFlow
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       defaultEdgeOptions={defaultEdgeOptions}
       onNodeDragStop={handleNodeDragStop}
+      onConnect={handleConnect}
       minZoom={0.1}
       maxZoom={1.5}
       fitView
@@ -72,6 +101,10 @@ function FlowCanvas() {
       <Background gap={24} />
       <Controls />
       <MiniMap pannable zoomable />
+      <Panel position="bottom-left" className="pointer-events-none rounded bg-white/80 px-2 py-1 text-[11px] text-gray-500 shadow-sm">
+        Drag between node handles to link threads · dashed = reference · click
+        its ✕ to remove it
+      </Panel>
     </ReactFlow>
   );
 }

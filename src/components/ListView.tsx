@@ -37,6 +37,7 @@ export function ListView({ onClose, onBroadcast }: ListViewProps) {
   const renameThread = useThreadStore((s) => s.renameThread);
   const deleteThread = useThreadStore((s) => s.deleteThread);
   const broadcastMessage = useThreadStore((s) => s.broadcastMessage);
+  const mergeThreads = useThreadStore((s) => s.mergeThreads);
   const focusThread = useFocusThread();
 
   const [sortKey, setSortKey] = useState<SortKey>('depth');
@@ -96,6 +97,16 @@ export function ListView({ onClose, onBroadcast }: ListViewProps) {
     }
   };
 
+  const handleMerge = () => {
+    if (selectedIds.size < 2) return;
+    const newThreadId = mergeThreads([...selectedIds]);
+    setSelectedIds(new Set());
+    if (newThreadId) {
+      focusThread(newThreadId);
+      onClose();
+    }
+  };
+
   return (
     <aside className="flex h-full w-[46rem] max-w-[50vw] flex-col border-l border-gray-200 bg-white">
       <header className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
@@ -103,7 +114,7 @@ export function ListView({ onClose, onBroadcast }: ListViewProps) {
           <h2 className="text-sm font-semibold text-gray-800">Threads</h2>
           <p className="text-xs text-gray-500">
             {rows.length} {rows.length === 1 ? 'thread' : 'threads'} · click a row to focus it on
-            the canvas · check rows to broadcast one question to all of them
+            the canvas · check rows to broadcast a question or merge them
           </p>
         </div>
         <button
@@ -182,18 +193,28 @@ export function ListView({ onClose, onBroadcast }: ListViewProps) {
                         }}
                       />
                     ) : (
-                      <button
-                        type="button"
-                        className="max-w-full truncate text-left font-medium text-gray-800 hover:underline"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDraftTitle(row.title);
-                          setEditingId(row.id);
-                        }}
-                        title="Click to rename"
-                      >
-                        {row.title}
-                      </button>
+                      <div className="flex min-w-0 items-center gap-1">
+                        {row.isMerge && (
+                          <span
+                            className="shrink-0 rounded bg-violet-100 px-1 py-0.5 text-[10px] font-semibold text-violet-700"
+                            title="Merge node"
+                          >
+                            ⑂
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="max-w-full truncate text-left font-medium text-gray-800 hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDraftTitle(row.title);
+                            setEditingId(row.id);
+                          }}
+                          title="Click to rename"
+                        >
+                          {row.title}
+                        </button>
+                      </div>
                     )}
                     <div className="truncate text-xs text-gray-400">
                       {isRoot ? 'root' : `↳ from ${row.parentTitle}`}
@@ -250,20 +271,21 @@ export function ListView({ onClose, onBroadcast }: ListViewProps) {
       </div>
 
       {selectedIds.size > 0 && (
-        <div className="nowheel flex items-end gap-2 border-t border-gray-200 bg-gray-50 p-2">
-          <div className="flex-1">
-            <div className="mb-1 flex items-center justify-between px-0.5 text-xs text-gray-500">
-              <span>
-                Broadcast to {selectedIds.size} {selectedIds.size === 1 ? 'thread' : 'threads'}
-              </span>
-              <button
-                type="button"
-                className="text-gray-400 hover:text-gray-700"
-                onClick={() => setSelectedIds(new Set())}
-              >
-                Clear selection
-              </button>
-            </div>
+        <div className="nowheel flex flex-col gap-2 border-t border-gray-200 bg-gray-50 p-2">
+          <div className="flex items-center justify-between px-0.5 text-xs text-gray-500">
+            <span>
+              {selectedIds.size} {selectedIds.size === 1 ? 'thread' : 'threads'} selected
+            </span>
+            <button
+              type="button"
+              className="text-gray-400 hover:text-gray-700"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Clear selection
+            </button>
+          </div>
+
+          <div className="flex items-end gap-2">
             <textarea
               className="max-h-20 w-full resize-none rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
               rows={1}
@@ -272,15 +294,26 @@ export function ListView({ onClose, onBroadcast }: ListViewProps) {
               onChange={(e) => setBroadcastText(e.target.value)}
               onKeyDown={handleBroadcastKeyDown}
             />
+            <button
+              type="button"
+              className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!broadcastText.trim()}
+              onClick={submitBroadcast}
+            >
+              Broadcast
+            </button>
           </div>
-          <button
-            type="button"
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!broadcastText.trim()}
-            onClick={submitBroadcast}
-          >
-            Broadcast
-          </button>
+
+          {selectedIds.size >= 2 && (
+            <button
+              type="button"
+              className="self-start rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-700 hover:bg-violet-100"
+              onClick={handleMerge}
+              title="Create a new thread that synthesizes the tail of each selected thread"
+            >
+              ⑂ Merge into one thread
+            </button>
+          )}
         </div>
       )}
     </aside>
