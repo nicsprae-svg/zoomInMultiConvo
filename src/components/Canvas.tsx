@@ -14,6 +14,7 @@ import '@xyflow/react/dist/style.css';
 import { useThreadStore } from '../store/useThreadStore';
 import { ThreadNode } from './ThreadNode';
 import { ListView } from './ListView';
+import { ComparePanel } from './ComparePanel';
 
 const nodeTypes = { thread: ThreadNode };
 
@@ -77,20 +78,23 @@ function FlowCanvas() {
 
 export function Canvas() {
   const [showList, setShowList] = useState(false);
+  const [compareIds, setCompareIds] = useState<string[] | null>(null);
   const threadCount = useThreadStore((s) => Object.keys(s.threads).length);
 
-  // Esc closes the list view, but only when focus isn't inside a field — there
-  // Esc means "blur this input" instead.
+  // Esc closes whichever overlay is open, but only when focus isn't inside a
+  // field — there Esc means "blur this input" instead. Compare, being on top,
+  // closes first.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      setShowList(false);
+      if (compareIds) setCompareIds(null);
+      else setShowList(false);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [compareIds]);
 
   return (
     <ReactFlowProvider>
@@ -107,8 +111,13 @@ export function Canvas() {
             </button>
           )}
         </div>
-        {showList && <ListView onClose={() => setShowList(false)} />}
+        {showList && (
+          <ListView onClose={() => setShowList(false)} onBroadcast={setCompareIds} />
+        )}
       </div>
+      {compareIds && (
+        <ComparePanel threadIds={compareIds} onClose={() => setCompareIds(null)} />
+      )}
     </ReactFlowProvider>
   );
 }

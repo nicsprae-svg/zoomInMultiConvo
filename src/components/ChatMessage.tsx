@@ -5,9 +5,10 @@ import type { Message } from '../types';
 interface ChatMessageProps {
   message: Message;
   onBranch: (messageId: string) => void;
+  onFanOut: (messageId: string) => void;
 }
 
-export function ChatMessage({ message, onBranch }: ChatMessageProps) {
+export function ChatMessage({ message, onBranch, onFanOut }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
 
@@ -47,14 +48,24 @@ export function ChatMessage({ message, onBranch }: ChatMessageProps) {
           {copied ? 'Copied' : 'Copy'}
         </button>
         {!isUser && (
-          <button
-            type="button"
-            className="nodrag rounded px-1.5 py-0.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-            onClick={() => onBranch(message.id)}
-            title="Branch a new thread from this message"
-          >
-            ⤷ Branch
-          </button>
+          <>
+            <button
+              type="button"
+              className="nodrag rounded px-1.5 py-0.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              onClick={() => onBranch(message.id)}
+              title="Branch a new thread from this message"
+            >
+              ⤷ Branch
+            </button>
+            <button
+              type="button"
+              className="nodrag rounded px-1.5 py-0.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              onClick={() => onFanOut(message.id)}
+              title="Generate 3 alternate replies to compare (fan-out)"
+            >
+              ⤷×3
+            </button>
+          </>
         )}
       </div>
     </div>

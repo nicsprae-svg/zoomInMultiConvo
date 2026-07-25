@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import { useThreadStore } from '../store/useThreadStore';
 import { useFocusThread } from '../hooks/useFocusThread';
 import { buildThreadRows, sortRows, type SortKey } from '../lib/threadTree';
@@ -6,6 +6,7 @@ import { STATUS_STYLES } from '../lib/status';
 import { THREAD_STATUSES, type ThreadStatus } from '../types';
 
 const COLUMNS: { key: SortKey | null; label: string; className?: string }[] = [
+  { key: null, label: '', className: 'w-8' },
   { key: 'depth', label: 'Depth', className: 'w-16' },
   { key: 'title', label: 'Thread' },
   { key: null, label: 'Branched from' },
@@ -26,19 +27,24 @@ function formatTime(ts: number): string {
 
 interface ListViewProps {
   onClose: () => void;
+  /** Broadcast just fired; open the compare panel on these threads. */
+  onBroadcast: (threadIds: string[]) => void;
 }
 
-export function ListView({ onClose }: ListViewProps) {
+export function ListView({ onClose, onBroadcast }: ListViewProps) {
   const threads = useThreadStore((s) => s.threads);
   const setThreadStatus = useThreadStore((s) => s.setThreadStatus);
   const renameThread = useThreadStore((s) => s.renameThread);
   const deleteThread = useThreadStore((s) => s.deleteThread);
+  const broadcastMessage = useThreadStore((s) => s.broadcastMessage);
   const focusThread = useFocusThread();
 
   const [sortKey, setSortKey] = useState<SortKey>('depth');
   const [ascending, setAscending] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [broadcastText, setBroadcastText] = useState('');
 
   const rows = useMemo(
     () => sortRows(buildThreadRows(threads), sortKey, ascending),
@@ -59,14 +65,45 @@ export function ListView({ onClose }: ListViewProps) {
     setEditingId(null);
   };
 
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
+  const toggleSelectAll = () => {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(rows.map((r) => r.id)));
+  };
+
+  const submitBroadcast = () => {
+    const trimmed = broadcastText.trim();
+    if (!trimmed || selectedIds.size === 0) return;
+    const ids = [...selectedIds];
+    broadcastMessage(ids, trimmed);
+    setBroadcastText('');
+    setSelectedIds(new Set());
+    onBroadcast(ids);
+  };
+
+  const handleBroadcastKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitBroadcast();
+    }
+  };
+
   return (
     <aside className="flex h-full w-[46rem] max-w-[50vw] flex-col border-l border-gray-200 bg-white">
       <header className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-gray-800">Threads</h2>
           <p className="text-xs text-gray-500">
-            {rows.length} {rows.length === 1 ? 'thread' : 'threads'} · click a row to focus it
-            on the canvas
+            {rows.length} {rows.length === 1 ? 'thread' : 'threads'} · click a row to focus it on
+            the canvas · check rows to broadcast one question to all of them
           </p>
         </div>
         <button
@@ -87,7 +124,14 @@ export function ListView({ onClose }: ListViewProps) {
                   key={column.label || `col-${index}`}
                   className={`border-b border-gray-200 px-3 py-2 font-medium ${column.className ?? ''}`}
                 >
-                  {column.key ? (
+                  {index === 0 ? (
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAll}
+                      title="Select all"
+                    />
+                  ) : column.key ? (
                     <button
                       type="button"
                       className="flex items-center gap-1 hover:text-gray-800"
@@ -106,12 +150,21 @@ export function ListView({ onClose }: ListViewProps) {
           <tbody>
             {rows.map((row) => {
               const isRoot = row.parentTitle === null;
+              const isSelected = selectedIds.has(row.id);
               return (
                 <tr
                   key={row.id}
-                  className="cursor-pointer border-b border-gray-100 hover:bg-blue-50"
+                  className={`cursor-pointer border-b border-gray-100 hover:bg-blue-50 ${isSelected ? 'bg-blue-50/60' : ''}`}
                   onClick={() => focusThread(row.id)}
                 >
+                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelected(row.id)}
+                    />
+                  </td>
+
                   <td className="px-3 py-2 text-gray-500">{row.depth}</td>
 
                   <td className="px-3 py-2">
@@ -195,6 +248,41 @@ export function ListView({ onClose }: ListViewProps) {
           </tbody>
         </table>
       </div>
+
+      {selectedIds.size > 0 && (
+        <div className="nowheel flex items-end gap-2 border-t border-gray-200 bg-gray-50 p-2">
+          <div className="flex-1">
+            <div className="mb-1 flex items-center justify-between px-0.5 text-xs text-gray-500">
+              <span>
+                Broadcast to {selectedIds.size} {selectedIds.size === 1 ? 'thread' : 'threads'}
+              </span>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-700"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                Clear selection
+              </button>
+            </div>
+            <textarea
+              className="max-h-20 w-full resize-none rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+              rows={1}
+              placeholder="Ask the same question of every selected thread…"
+              value={broadcastText}
+              onChange={(e) => setBroadcastText(e.target.value)}
+              onKeyDown={handleBroadcastKeyDown}
+            />
+          </div>
+          <button
+            type="button"
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!broadcastText.trim()}
+            onClick={submitBroadcast}
+          >
+            Broadcast
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

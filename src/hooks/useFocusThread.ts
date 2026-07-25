@@ -23,3 +23,21 @@ export function useFocusThread() {
     [setCenter, getZoom],
   );
 }
+
+/** Fits the viewport around several threads at once — used after fan-out. */
+export function useFocusThreads() {
+  const { fitView } = useReactFlow();
+
+  return useCallback(
+    (threadIds: string[]) => {
+      if (threadIds.length === 0) return;
+      fitView({
+        nodes: threadIds.map((id) => ({ id })),
+        duration: 400,
+        padding: 0.3,
+        maxZoom: 1,
+      });
+    },
+    [fitView],
+  );
+}

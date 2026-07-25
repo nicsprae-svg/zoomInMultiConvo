@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Handle, Position as HandlePosition, type NodeProps } from '@xyflow/react';
 import { useThreadStore } from '../store/useThreadStore';
-import { useFocusThread } from '../hooks/useFocusThread';
+import { useFocusThread, useFocusThreads } from '../hooks/useFocusThread';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { TypingIndicator } from './TypingIndicator';
@@ -9,16 +9,20 @@ import { NODE_HEIGHT, NODE_WIDTH } from '../lib/layout';
 import { STATUS_STYLES } from '../lib/status';
 import { THREAD_STATUSES, type ThreadStatus } from '../types';
 
+const FAN_OUT_COUNT = 3;
+
 export function ThreadNode({ id }: NodeProps) {
   const thread = useThreadStore((s) => s.threads[id]);
   const sendUserMessage = useThreadStore((s) => s.sendUserMessage);
   const branchFromMessage = useThreadStore((s) => s.branchFromMessage);
+  const branchFanOut = useThreadStore((s) => s.branchFanOut);
   const retryReply = useThreadStore((s) => s.retryReply);
   const renameThread = useThreadStore((s) => s.renameThread);
   const setThreadStatus = useThreadStore((s) => s.setThreadStatus);
   const deleteThread = useThreadStore((s) => s.deleteThread);
 
   const focusThread = useFocusThread();
+  const focusThreads = useFocusThreads();
   const listRef = useRef<HTMLDivElement>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
@@ -35,6 +39,11 @@ export function ThreadNode({ id }: NodeProps) {
   const handleBranch = (messageId: string) => {
     const newThreadId = branchFromMessage(id, messageId);
     if (newThreadId !== id) focusThread(newThreadId);
+  };
+
+  const handleFanOut = (messageId: string) => {
+    const newIds = branchFanOut(id, messageId, FAN_OUT_COUNT);
+    if (newIds.length > 0) focusThreads(newIds);
   };
 
   const branchFromLastReply = () => {
@@ -121,7 +130,12 @@ export function ThreadNode({ id }: NodeProps) {
           <p className="text-sm text-gray-400">Say something to start the conversation.</p>
         )}
         {thread.messages.map((message) => (
-          <ChatMessage key={message.id} message={message} onBranch={handleBranch} />
+          <ChatMessage
+            key={message.id}
+            message={message}
+            onBranch={handleBranch}
+            onFanOut={handleFanOut}
+          />
         ))}
         {thread.isGeneratingReply && <TypingIndicator />}
         {thread.error && (

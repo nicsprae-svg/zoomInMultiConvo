@@ -15,6 +15,15 @@ interface ThreadStoreState {
   /** Re-runs generation against the thread's current history after a failure. */
   retryReply: (threadId: string) => void;
   branchFromMessage: (sourceThreadId: string, messageId: string) => string;
+  /**
+   * Regenerates an assistant message `count` different ways: branches at the
+   * user turn preceding it (excluding the original reply) into `count` new
+   * sibling threads, each requesting its own reply concurrently. Returns the
+   * new thread ids.
+   */
+  branchFanOut: (sourceThreadId: string, messageId: string, count: number) => string[];
+  /** Appends the same user message to each thread and generates in parallel. */
+  broadcastMessage: (threadIds: string[], content: string) => void;
   renameThread: (threadId: string, title: string) => void;
   setThreadStatus: (threadId: string, status: ThreadStatus) => void;
   deleteThread: (threadId: string) => void;
@@ -70,8 +79,10 @@ export const useThreadStore = create<ThreadStoreState>()(
      * Generates a reply from the thread's current history. Always clears
      * `isGeneratingReply`, on both paths — a rejection that left it set would
      * disable the thread's input with no way back short of wiping storage.
+     * `variantHint` is passed through so concurrent calls sharing identical
+     * history (fan-out, broadcast) don't come back as duplicates.
      */
-    const requestReply = (threadId: string) => {
+    const requestReply = (threadId: string, variantHint?: string) => {
       patchThread(threadId, (thread) => ({
         ...thread,
         isGeneratingReply: true,
@@ -81,7 +92,7 @@ export const useThreadStore = create<ThreadStoreState>()(
       const history = get().threads[threadId]?.messages ?? [];
 
       llmClient
-        .getReply(toLLMMessages(history))
+        .getReply(toLLMMessages(history), variantHint)
         .then((replyContent) => {
           const assistantMessage: Message = {
             id: generateId(),
@@ -170,6 +181,83 @@ export const useThreadStore = create<ThreadStoreState>()(
         }));
 
         return newThreadId;
+      },
+
+      branchFanOut: (sourceThreadId, messageId, count) => {
+        const state = get();
+        const source = state.threads[sourceThreadId];
+        if (!source || count < 1) return [];
+
+        const branchIndex = source.messages.findIndex((m) => m.id === messageId);
+        if (branchIndex === -1) return [];
+
+        // Exclusive of the branched message: fan-out regenerates *that* reply
+        // itself, N different ways, rather than continuing past it.
+        const inheritedMessages = source.messages.slice(0, branchIndex).map((m) => ({ ...m }));
+
+        let workingThreads = state.threads;
+        const newIds: string[] = [];
+        const newEdges: ThreadEdge[] = [];
+
+        for (let i = 0; i < count; i++) {
+          const newThreadId = generateId();
+          const position = computeBranchPosition(source, workingThreads);
+          const newThread = createThread({
+            id: newThreadId,
+            parentThreadId: sourceThreadId,
+            branchFromMessageId: messageId,
+            title: `Variant ${i + 1} of ${source.title}`,
+            messages: inheritedMessages,
+            position,
+          });
+          workingThreads = { ...workingThreads, [newThreadId]: newThread };
+          newIds.push(newThreadId);
+          newEdges.push({
+            id: `${sourceThreadId}-${newThreadId}`,
+            source: sourceThreadId,
+            target: newThreadId,
+          });
+        }
+
+        set({ threads: workingThreads, edges: [...state.edges, ...newEdges] });
+
+        // Each sibling starts from the exact same history, so each needs its
+        // own hint or all three would come back with the same reply text.
+        newIds.forEach((newThreadId) => requestReply(newThreadId, newThreadId));
+
+        return newIds;
+      },
+
+      broadcastMessage: (threadIds, content) => {
+        const trimmed = content.trim();
+        if (!trimmed) return;
+
+        const state = get();
+        // Skip threads already mid-generation rather than clobbering an
+        // in-flight request.
+        const targetIds = threadIds.filter(
+          (id) => state.threads[id] && !state.threads[id].isGeneratingReply,
+        );
+        if (targetIds.length === 0) return;
+
+        set((s) => {
+          const threads = { ...s.threads };
+          for (const id of targetIds) {
+            const thread = threads[id];
+            const userMessage: Message = {
+              id: generateId(),
+              role: 'user',
+              content: trimmed,
+              timestamp: Date.now(),
+            };
+            threads[id] = { ...thread, messages: [...thread.messages, userMessage] };
+          }
+          return { threads };
+        });
+
+        // Hint with the thread id: two broadcast targets can share identical
+        // history (e.g. fresh fan-out siblings), so history alone won't do.
+        targetIds.forEach((id) => requestReply(id, id));
       },
 
       renameThread: (threadId, title) => {
