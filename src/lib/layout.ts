@@ -1,14 +1,20 @@
-import type { Position, Thread, ThreadEdge } from '../types';
+import type { Position, Thread } from '../types';
 
 export const NODE_WIDTH = 360;
 export const NODE_HEIGHT = 480;
 export const H_GAP = 120;
 export const V_GAP = 40;
 
-function depthOf(threadId: string, threads: Record<string, Thread>): number {
+/**
+ * Generations between this thread and its root. Guards against a cycle so a
+ * corrupted parent chain can't spin forever.
+ */
+export function depthOf(threadId: string, threads: Record<string, Thread>): number {
+  const seen = new Set<string>([threadId]);
   let depth = 0;
   let current = threads[threadId];
-  while (current?.parentThreadId) {
+  while (current?.parentThreadId && !seen.has(current.parentThreadId)) {
+    seen.add(current.parentThreadId);
     depth += 1;
     current = threads[current.parentThreadId];
   }
@@ -22,7 +28,6 @@ function depthOf(threadId: string, threads: Record<string, Thread>): number {
 export function computeBranchPosition(
   parent: Thread,
   threads: Record<string, Thread>,
-  _edges: ThreadEdge[],
 ): Position {
   const depth = depthOf(parent.id, threads) + 1;
   const x = depth * (NODE_WIDTH + H_GAP);

@@ -8,3 +8,116 @@ body,
   margin: 0;
   height: 100%;
 }
+
+/*
+ * Minimal markdown styling for assistant messages. Tailwind's preflight strips
+ * default element styles, so headings/lists/code need them restored here.
+ */
+@layer components {
+  .prose-chat > :first-child {
+    margin-top: 0;
+  }
+
+  .prose-chat > :last-child {
+    margin-bottom: 0;
+  }
+
+  .prose-chat p,
+  .prose-chat ul,
+  .prose-chat ol,
+  .prose-chat pre,
+  .prose-chat blockquote {
+    margin: 0.5rem 0;
+  }
+
+  .prose-chat h1,
+  .prose-chat h2,
+  .prose-chat h3 {
+    margin: 0.75rem 0 0.375rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .prose-chat h1 {
+    font-size: 1.05rem;
+  }
+
+  .prose-chat h2 {
+    font-size: 1rem;
+  }
+
+  .prose-chat h3 {
+    font-size: 0.9375rem;
+  }
+
+  .prose-chat ul,
+  .prose-chat ol {
+    padding-left: 1.25rem;
+  }
+
+  .prose-chat ul {
+    list-style: disc;
+  }
+
+  .prose-chat ol {
+    list-style: decimal;
+  }
+
+  .prose-chat li {
+    margin: 0.125rem 0;
+  }
+
+  .prose-chat a {
+    color: #2563eb;
+    text-decoration: underline;
+  }
+
+  .prose-chat strong {
+    font-weight: 600;
+  }
+
+  .prose-chat em {
+    font-style: italic;
+  }
+
+  .prose-chat code {
+    border-radius: 0.25rem;
+    background: rgb(0 0 0 / 0.06);
+    padding: 0.0625rem 0.25rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem;
+  }
+
+  .prose-chat pre {
+    overflow-x: auto;
+    border-radius: 0.5rem;
+    background: #1e293b;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .prose-chat pre code {
+    background: transparent;
+    padding: 0;
+    color: #e2e8f0;
+  }
+
+  .prose-chat blockquote {
+    border-left: 3px solid rgb(0 0 0 / 0.15);
+    padding-left: 0.625rem;
+    color: rgb(0 0 0 / 0.7);
+  }
+
+  .prose-chat table {
+    display: block;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+
+  .prose-chat th,
+  .prose-chat td {
+    border: 1px solid rgb(0 0 0 / 0.12);
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+  }
+}

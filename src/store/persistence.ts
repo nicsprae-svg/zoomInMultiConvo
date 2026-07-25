@@ -1,10 +1,13 @@
 import type { Thread, ThreadEdge } from '../types';
 
-const STORAGE_KEY = 'zoomChat:v1';
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const STORAGE_KEY = `zoomChat:v${SCHEMA_VERSION}`;
+
+/** Older keys are read once, migrated forward, then written under STORAGE_KEY. */
+const LEGACY_KEYS = ['zoomChat:v1'];
 
 export interface PersistedState {
-  version: typeof SCHEMA_VERSION;
+  version: number;
   threads: Record<string, Thread>;
   edges: ThreadEdge[];
   rootThreadId: string | null;
@@ -15,29 +18,71 @@ export function saveState(state: Omit<PersistedState, 'version'>): void {
     const payload: PersistedState = { version: SCHEMA_VERSION, ...state };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (err) {
-    console.warn('Failed to save state to localStorage', err);
+    // Most likely QuotaExceededError. Surface it rather than losing data silently.
+    console.error('Failed to save state to localStorage — changes are not persisted', err);
   }
 }
 
-export function loadState(): PersistedState | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (
-      parsed &&
-      parsed.version === SCHEMA_VERSION &&
-      typeof parsed.threads === 'object' &&
-      Array.isArray(parsed.edges)
-    ) {
-      return parsed as PersistedState;
-    }
-    console.warn('Ignoring persisted state with incompatible shape/version');
-    return null;
-  } catch (err) {
-    console.warn('Failed to load state from localStorage', err);
+/**
+ * v1 -> v2: threads gained `status` and `error`.
+ * Returns null when the payload is too old or malformed to rescue.
+ */
+function migrate(data: unknown): PersistedState | null {
+  if (!data || typeof data !== 'object') return null;
+  const raw = data as Record<string, unknown>;
+
+  if (typeof raw.threads !== 'object' || raw.threads === null || !Array.isArray(raw.edges)) {
     return null;
   }
+  if (raw.version !== 1 && raw.version !== SCHEMA_VERSION) return null;
+
+  const threads: Record<string, Thread> = {};
+  for (const [id, value] of Object.entries(raw.threads as Record<string, unknown>)) {
+    const thread = value as Partial<Thread>;
+    if (!thread || typeof thread.id !== 'string' || !Array.isArray(thread.messages)) {
+      return null;
+    }
+    threads[id] = {
+      ...(thread as Thread),
+      status: thread.status ?? 'open',
+      // Transient fields never survive a reload: an in-flight request died with
+      // the page, so a persisted `true` would strand the thread permanently.
+      isGeneratingReply: false,
+      error: null,
+    };
+  }
+
+  return {
+    version: SCHEMA_VERSION,
+    threads,
+    edges: raw.edges as ThreadEdge[],
+    rootThreadId: typeof raw.rootThreadId === 'string' ? raw.rootThreadId : null,
+  };
+}
+
+export function loadState(): PersistedState | null {
+  for (const key of [STORAGE_KEY, ...LEGACY_KEYS]) {
+    let parsed: unknown;
+    try {
+      const rawText = localStorage.getItem(key);
+      if (!rawText) continue;
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      console.warn(`Discarding unparseable persisted state at ${key}`, err);
+      continue;
+    }
+
+    const migrated = migrate(parsed);
+    if (migrated) {
+      if (key !== STORAGE_KEY) {
+        // Write forward immediately so the migration only ever runs once.
+        saveState(migrated);
+      }
+      return migrated;
+    }
+    console.warn(`Discarding persisted state at ${key}: incompatible shape or version`);
+  }
+  return null;
 }
 
 export function debounce<Args extends unknown[]>(

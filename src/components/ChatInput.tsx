@@ -3,9 +3,11 @@ import { useState, type KeyboardEvent } from 'react';
 interface ChatInputProps {
   disabled: boolean;
   onSend: (content: string) => void;
+  /** Cmd/Ctrl+B — branches from this thread's most recent assistant message. */
+  onBranchLast: () => void;
 }
 
-export function ChatInput({ disabled, onSend }: ChatInputProps) {
+export function ChatInput({ disabled, onSend, onBranchLast }: ChatInputProps) {
   const [value, setValue] = useState('');
 
   const submit = () => {
@@ -20,6 +22,15 @@ export function ChatInput({ disabled, onSend }: ChatInputProps) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       submit();
+      return;
+    }
+    if (e.key === 'b' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      onBranchLast();
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.currentTarget.blur();
     }
   };
 

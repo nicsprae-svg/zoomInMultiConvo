@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState, useEffect } from 'react';
 import {
   Background,
   Controls,
@@ -13,6 +13,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useThreadStore } from '../store/useThreadStore';
 import { ThreadNode } from './ThreadNode';
+import { ListView } from './ListView';
 
 const nodeTypes = { thread: ThreadNode };
 
@@ -75,11 +76,39 @@ function FlowCanvas() {
 }
 
 export function Canvas() {
+  const [showList, setShowList] = useState(false);
+  const threadCount = useThreadStore((s) => Object.keys(s.threads).length);
+
+  // Esc closes the list view, but only when focus isn't inside a field — there
+  // Esc means "blur this input" instead.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      setShowList(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
-    <div className="h-screen w-screen">
-      <ReactFlowProvider>
-        <FlowCanvas />
-      </ReactFlowProvider>
-    </div>
+    <ReactFlowProvider>
+      <div className="flex h-screen w-screen overflow-hidden">
+        <div className="relative min-w-0 flex-1">
+          <FlowCanvas />
+          {!showList && (
+            <button
+              type="button"
+              className="absolute right-4 top-4 z-10 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow hover:bg-gray-50"
+              onClick={() => setShowList(true)}
+            >
+              List view ({threadCount})
+            </button>
+          )}
+        </div>
+        {showList && <ListView onClose={() => setShowList(false)} />}
+      </div>
+    </ReactFlowProvider>
   );
 }
